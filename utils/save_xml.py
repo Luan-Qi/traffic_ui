@@ -104,6 +104,26 @@ def write_nodes(child):
     route.set('type', "priority")
 
 
+def build_xml_element(parent, data):
+    for key, value in data.items():
+        key = str(key)
+        if isinstance(value, dict):
+            child = ET.SubElement(parent, key)
+            build_xml_element(child, value)
+        else:
+            child = ET.SubElement(parent, key)
+            child.text = str(value)
+
+def save_dict_to_xml(child, data):
+    for item_key, item_value in data.items():
+        item_element = ET.SubElement(child, 'dir')
+        item_element.set('key', str(item_key))
+        build_xml_element(item_element, item_value)
+
+def write_dir(child, dir_data):
+    save_dict_to_xml(child, dir_data)
+
+
 def write_roads(dir,scale,outputpath):
     def transform(points, scale = scale):
         # 坐标转换，像素到实际
@@ -297,6 +317,9 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
 
     child4 = ET.SubElement(root, 'nodes')
     write_nodes(child4)
+
+    child5 = ET.SubElement(root, 'dir')
+    write_dir(child5, dir)
 
 
 

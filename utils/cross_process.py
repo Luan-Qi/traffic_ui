@@ -588,7 +588,17 @@ class Hand_Draw_Cross(object):
 
 
 class Segmentation_Cross(object):
-    def __init__(self, filepath):
+    def __init__(self, filepath = None):
+        if filepath is None:
+            self.dir = None
+            self.out = None
+            self.size = None
+            self.roi_zone = None
+            self.scale = None
+            self.size = None
+            self.road_rules = None
+            return
+
         # 文件加载
         self.video_path = filepath
         self.video = cv2.VideoCapture(filepath)
