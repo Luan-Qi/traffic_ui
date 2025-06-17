@@ -10,15 +10,15 @@ weights/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc
- *.pyo
- *.pyd
+*.pyo
+*.pyd
 
  # Logs and databases
- *.log
- *.sql
- *.sqlite
+*.log
+*.sql
+*.sqlite
 
- # IDEs and editors
- .idea/
- .vscode/
- *.iml
+# IDEs and editors
+.idea/
+.vscode/
+*.iml
