@@ -1,20 +1,29 @@
 # -*- coding: utf-8 -*-
+import os
 import sys
+import traceback
+
 from PySide6.QtWidgets import QApplication, QWidget, QBoxLayout, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QLabel, \
-    QComboBox, QTextEdit, QCheckBox, QSizeGrip
-from PySide6.QtCore import QTimer, QPoint, QSize, Qt
-from PySide6.QtGui import QMouseEvent, QResizeEvent, QImage, QPixmap
+    QComboBox, QTextEdit, QCheckBox, QSizeGrip, QSizePolicy
+from PySide6.QtCore import QTimer, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QImage, QPixmap
 import cv2
+import time
+import numpy as np
+import random
+from track import VehicleTracker
 from datetime import datetime
-# from utils.main_utils import lanemark as lm, calculate_speedlane, roi_mask, roi_mask2
-from utils.cross_process import Hand_Draw_Cross, Segmentation_Cross
-from utils.highway_process import Hand_Draw, Segmentation
+# from utils.main_utils import draw_bounding_boxes
+# from utils.cross_process import Segmentation_Cross
+# from utils.highway_process import Segmentation
 # 初始化摄像头和Yolo模型
 from utils.draw_stop_lane import draw_road_lines
 from utils.read_xml import xml_to_dict_for_dir
+from utils.hand_draw_utils import ImageLabel
 from threading import Thread
 from qt_material import apply_stylesheet
 
+window_exit_flag = False
 
 class tQTitleBar(QWidget):
     def __init__(self, parent=None):
@@ -51,9 +60,13 @@ class tQTitleBar(QWidget):
         # 信号连接
         self.min_btn.clicked.connect(self.window().showMinimized)
         self.max_btn.clicked.connect(self.toggle_maximize)
-        self.close_btn.clicked.connect(self.window().close)
+        self.close_btn.clicked.connect(self.function_close)
 
     def _init_style(self):
+        self.min_btn.setObjectName("min_btn")
+        self.max_btn.setObjectName("max_btn")
+        self.close_btn.setObjectName("close_btn")
+        self.title_label.setObjectName("title_label")
         self.setStyleSheet("""
             /* 使用ID选择器提高优先级 */
             QWidget#titleBar QPushButton {
@@ -70,10 +83,17 @@ class tQTitleBar(QWidget):
             QWidget#titleBar QPushButton#close_btn:hover {
                 background: #FF9AB6 !important;
             }
+            QWidget#titleBar QLabel#title_label {
+                font-weight: bold !important;  /* 设置字体为加粗 */
+                color: white !important;
+                font-family: "Segoe UI Symbol";
+                font-size: 14px;  /* 根据需要调整字体大小 */
+        }
         """)
-        self.min_btn.setObjectName("min_btn")
-        self.max_btn.setObjectName("max_btn")
-        self.close_btn.setObjectName("close_btn")
+
+    def function_close(self):
+        self.window().close()
+        self.window().window_exit_flag = True
 
     def toggle_maximize(self):
         window_param = self.window()
@@ -133,15 +153,6 @@ class AspectRatioLabel(QLabel):
             super(AspectRatioLabel, self).setPixmap(scaled_pixmap)
         super(AspectRatioLabel, self).resizeEvent(event)
 
-class ResizableQLabel(QLabel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-    def resizeEvent(self, event: QResizeEvent):
-        super().resizeEvent(event)
-        print(f"Image label new size: {event.size()}")
-
-
 def clear_layout_only_widght(layout: QBoxLayout):
     while layout.count():
         item = layout.takeAt(0)
@@ -149,8 +160,18 @@ def clear_layout_only_widght(layout: QBoxLayout):
         layout.removeWidget(widget)
         widget.setParent(None)  # 将小部件的父类设置为None
 
+def extract_border_color(stylesheet):
+    # 使用正则表达式解析样式表以提取边框颜色
+    import re
+    match = re.search(r'border:\s*\d+px\s+solid\s+(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3});', stylesheet)
+    if match:
+        return match.group(1)
+    return "black"  # 默认颜色
+
 
 class MainWindow(QWidget):
+    update_label_signal = Signal()
+    update_label_img_signal = Signal(np.ndarray)
     def __init__(self):
         super().__init__()
         # 设置界面
@@ -158,27 +179,32 @@ class MainWindow(QWidget):
                             Qt.WindowType.WindowMinMaxButtonsHint)
         # self.setAttribute(Qt.WA_TranslucentBackground)
         self.title_bar = None
+        self.layout_label = None
+        self.btnLayout_H0 = None
+        self.btnLayout_H1 = None
         self.btn_xml_process = None
         self.btn_video_open = None
         self.btnLayout_video = None
         self.btn_video_play = None
         self.btn_video_stop = None
-        self.btnLayout_H0 = None
-        self.btn_execute_video = None
+        self.btn_execute_road = None
+        self.btn_execute_traffic = None
         self.btn_execute_stop = None
         self.size_grip = None
 
         self.processing_method_combobox = None
-        self.processing_case = None
         self.save_case1 = None
         self.save_case2 = None
         self.save_case3 = None
         self.text_edit = None
         self.image_label = None
+        self.image_draw_label = None
 
         self.video_path = None
         self.video_capture = None
         self.xml_path = None
+        self.csv_path = None
+
         self.data_road_dir_ready = False
         self.data_xml_ready = False
         self.video_played = False
@@ -188,6 +214,11 @@ class MainWindow(QWidget):
         self.timer_update_frame = QTimer(self)
         self.timer_update_frame_flag = False
         self.timer_update_frame.timeout.connect(self.timer_func_update_frame)
+        self.timer_scroll_txt = QTimer(self)
+        self.timer_scroll_txt_flag = False
+        self.timer_scroll_txt.setInterval(200)  # 设置定时器间隔为500毫秒
+        self.timer_scroll_txt.setSingleShot(True)  # 设置为单次触发
+        self.timer_scroll_txt.timeout.connect(self.scroll_to_bottom)
 
         self.thread_get_road_lines = None
         self.thread_get_traffic_out = None
@@ -195,37 +226,71 @@ class MainWindow(QWidget):
 
         self.routes = None
         self.show_current_frame = None
-        self.transparent_pixmap = QPixmap(4000, 4000)
+        self.transparent_pixmap = QPixmap(4000, 3000)
         self.transparent_pixmap.fill(Qt.GlobalColor.transparent)
         self.windows_Maximized_width = 0
         self.windows_Normal_width = 0
+        self.window_exit_flag = False
 
         self.setupUI()
+        self.update_label_signal.connect(self.update_label_slot)
+        self.update_label_img_signal.connect(self.show_processed_frame_later)
+        self.multi_thread_lock = False
+        self.is_drawing_lane = False
 
-        # 要处理的视频帧图片队列，目前就放1帧图片
-        self.frameToAnalyze = []
+        self.developer_lock = True
 
 
     def timer_func_update_frame(self):
-        if self.show_current_frame is not None:
-            self.show_processed_frame(self.show_current_frame)
-            self.timer_update_frame.stop()
-            self.timer_update_frame_flag = False
+        self.show_processed_frame()
+        self.timer_update_frame.stop()
+        self.timer_update_frame_flag = False
+
+        if not self.video_stopped:# 如果视频在播放中则恢复播放
+            self.timer_play_frame.start(30)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # 重新设置 QSizeGrip 的位置
         self.size_grip.move(self.width() - 20, self.height() - 20)
         if self.show_current_frame is not None:
-            self.image_label.setPixmap(self.transparent_pixmap)
+            if not self.video_stopped:# 防止视频刷新从而影响窗口大小的更新
+                self.timer_play_frame.stop()
+
+            if self.image_draw_label is not None:
+                self.image_draw_label.setPixmap(self.transparent_pixmap)
+            else:
+                self.image_label.setPixmap(self.transparent_pixmap)
             self.timer_update_frame_flag = True
             if self.timer_update_frame_flag and self.timer_update_frame.isActive() == False:
                 self.timer_update_frame.start(50)
+
         if self.isMaximized():
             self.windows_Maximized_width = self.width()
         else:
             self.windows_Normal_width = self.width()
 
+    def update_label_slot(self):
+        if self.image_draw_label is None:
+            self.image_draw_label = ImageLabel(self)
+            self.image_draw_label.setStyleSheet("border: 2px solid #0CFF4A;")
+            self.layout_label.removeWidget(self.image_label)
+            self.image_label.setParent(None)
+            self.layout_label.addWidget(self.image_draw_label, stretch=1)
+            self.image_draw_label.setPixmap(self.transparent_pixmap)
+            self.layout_label.setAlignment(self.image_draw_label, Qt.AlignmentFlag.AlignCenter)
+            self.image_draw_label.setFocus()  # 确保获得键盘焦点
+        else:
+            self.layout_label.removeWidget(self.image_draw_label)
+            self.image_draw_label.setParent(None)
+            self.image_draw_label.deleteLater()
+            self.image_draw_label = None
+            self.layout_label.addWidget(self.image_label)
+            self.image_label.setPixmap(self.transparent_pixmap)
+            self.layout_label.setAlignment(self.image_label, Qt.AlignmentFlag.AlignCenter)# 确保边框紧贴
+            if self.show_current_frame is not None:
+                if not self.timer_update_frame.isActive():
+                    self.timer_update_frame.start(50)
 
     def setupUI(self):
         #self.resize(800, 600)
@@ -260,17 +325,18 @@ class MainWindow(QWidget):
 
         layout_main_HA.addLayout(self.btnLayout_H0, stretch=2)
 
-        btnLayout_H1 = QHBoxLayout()
+        self.btnLayout_H1 = QHBoxLayout()
 
         chooseLayout = QHBoxLayout()
         self.processing_method_combobox = QComboBox()
-        self.processing_method_combobox.addItems(["利用手划线车道线作为车道位置", "利用语义分割模型识别车道线"])  # 根据实际处理方式添加选项
-        self.processing_method_combobox.setStyleSheet("QComboBox{ color: white; }")
+        self.processing_method_combobox.addItems(["手划车道线获取路网结构-1 ",
+                                                  "手划车道线获取路网结构-2",
+                                                  "手划车道线获取路网结构-3",
+                                                  "手划车道线获取路网结构-4",
+                                                  "语义分割识别路网结构-道路",
+                                                  "语义分割识别路网结构-路口"])  # 根据实际处理方式添加选项
+        self.processing_method_combobox.setStyleSheet("QComboBox{ color: white; font-weight: bold; }")
         chooseLayout.addWidget(self.processing_method_combobox)
-        self.processing_case = QComboBox()
-        self.processing_case.addItems(["高速/高架", "路口"])  # 根据实际处理方式添加选项
-        self.processing_case.setStyleSheet("QComboBox{ color: white; }")
-        chooseLayout.addWidget(self.processing_case)
 
         checkLayout = QHBoxLayout()
         self.save_case1 = QCheckBox("视频")
@@ -280,14 +346,15 @@ class MainWindow(QWidget):
         self.save_case3 = QCheckBox("分车道车流量")
         checkLayout.addWidget(self.save_case3)
 
-        btnLayout_H1.addLayout(chooseLayout, stretch=3)
-        btnLayout_H1.addLayout(checkLayout, stretch=1)
-        layout_main_HA.addLayout(btnLayout_H1, stretch=1)
+        self.btnLayout_H1.addLayout(chooseLayout, stretch=1)
+        self.btnLayout_H1.addLayout(checkLayout, stretch=1)
+        layout_main_HA.addLayout(self.btnLayout_H1, stretch=1)
 
-        self.btn_execute_video = QPushButton("获取车道线信息")
-        self.btn_execute_video.clicked.connect(self.start_process_traffic_video)
+        self.btn_execute_road = QPushButton("获取车道线信息")
+        self.btn_execute_road.clicked.connect(self.start_process_road)
 
-        # self.btn_execute_traffic = QPushButton("获取交通流参数")
+        self.btn_execute_traffic = QPushButton("获取交通流信息")
+        self.btn_execute_traffic.clicked.connect(self.start_process_traffic)
 
         self.btn_execute_stop = QPushButton("🛑结束！")
         self.btn_execute_stop.clicked.connect(self.stop_process)
@@ -296,15 +363,20 @@ class MainWindow(QWidget):
         self.text_edit.setReadOnly(True)
         layout_main_HA.addWidget(self.text_edit, stretch=1)
 
-        layoutVid = QHBoxLayout()
+        self.layout_label = QHBoxLayout()
         self.image_label = QLabel(self)
+        self.image_label.setObjectName("image_label")  # 设置控件的名称
+        source_stylesheet = self.btn_execute_stop.styleSheet()
+        border_color = extract_border_color(source_stylesheet)
+        self.image_label.setStyleSheet(f"border: 2px solid {border_color};")  # 设置2像素宽的红色边框
         self.image_label.setStyleSheet("border: 2px solid #20CBA2;")  # 设置2像素宽的红色边框
         self.image_label.setPixmap(self.transparent_pixmap)
-        layoutVid.addWidget(self.image_label, stretch=1)
-        layoutVid.setAlignment(self.image_label, Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.layout_label.addWidget(self.image_label, stretch=1)
+        self.layout_label.setAlignment(self.image_label, Qt.AlignmentFlag.AlignCenter)
 
         layout_main.addLayout(layout_main_HA, stretch=1)
-        layout_main.addLayout(layoutVid, stretch=9)
+        layout_main.addLayout(self.layout_label, stretch=9)
 
         self.setLayout(layout_main)
         self.resize(800, 600)
@@ -312,18 +384,12 @@ class MainWindow(QWidget):
         # 创建一个 QSizeGrip 对象，并将其添加到窗口中
         self.size_grip = QSizeGrip(self)
         self.size_grip.setGeometry(self.width() - 20, self.height() - 20, 20, 20)
-        # self.timer = QTimer(self)  # 定义定时器，用于控制显示视频的帧率
-        # self.timer.timeout.connect(self.update_frame)  # 定时到了，回调 self.update_frame
 
 
     def button_video_open(self):
         self.video_path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", "", "视频文件 (*.mp4 *.avi)")
         if self.video_path:
             self.video_capture = cv2.VideoCapture(self.video_path)
-            # self.showMaximized()  # 切换为最大化显示，保留标题栏
-            # flags = self.windowFlags()
-            # flags = flags | Qt.WindowMaximized
-            # self.setWindowFlags(flags)
             self.btnLayout_video.removeWidget(self.btn_video_open)
             self.btn_video_open.setParent(None)
             self.btnLayout_video.addWidget(self.btn_video_play)
@@ -335,13 +401,19 @@ class MainWindow(QWidget):
         if self.video_capture is not None:
             ret, frame = self.video_capture.read()
             if ret:
-                self.show_current_frame = frame
+                self.show_current_frame = frame.copy()
                 self.show_processed_frame(frame)
-                self.btnLayout_H0.addWidget(self.btn_execute_video)
+                self.btnLayout_H0.addWidget(self.btn_execute_road)
+                self.btnLayout_H1.addWidget(self.btn_execute_traffic, stretch=1)
                 self.btn_video_play.setText("播放原视频")
                 self.systerm_status_echo("视频已打开！")
+                self.routes = VehicleTracker(self.video_path)
 
     def button_video_play(self):
+        if self.thread_running_flag:
+            self.systerm_status_echo("视频处理中，无法播放视频，请等待处理完成！")
+            return
+
         if self.video_capture is not None:
             if not self.video_played:
                 self.timer_play_frame.timeout.connect(self.update_video_frame)
@@ -372,20 +444,24 @@ class MainWindow(QWidget):
             self.video_capture.release()
         self.image_label.setPixmap(self.transparent_pixmap)
         self.show_current_frame = None
+        del self.routes
+        self.routes = None
+        self.video_path = None
+        self.video_capture = None
+        self.xml_path = None
+        self.csv_path = None
+        self.data_road_dir_ready = False
+        self.data_xml_ready = False
         self.video_played = False
         self.video_stopped = True
-        self.data_xml_ready = False
-        self.data_road_dir_ready = False
-        self.routes = None
-        self.video_capture = None
-        self.video_path = None
-        self.xml_path = None
         self.timer_play_frame = QTimer(self)
         self.systerm_status_echo("视频已关闭！")
         self.btn_xml_process.setText("导入道路结构")
 
         self.btnLayout_H0.removeItem(self.btnLayout_H0.itemAt(2))
-        self.btn_execute_video.setParent(None)
+        self.btn_execute_road.setParent(None)
+        self.btnLayout_H1.removeItem(self.btnLayout_H1.itemAt(2))
+        self.btn_execute_traffic.setParent(None)
         self.btnLayout_video.removeWidget(self.btn_video_play)
         self.btnLayout_video.removeWidget(self.btn_video_stop)
         self.btn_video_play.setParent(None)
@@ -404,20 +480,26 @@ class MainWindow(QWidget):
                     if self.timer_play_frame is not None:
                         self.timer_play_frame.stop()
                     return
-            self.show_current_frame = frame
+            self.show_current_frame = frame.copy()
             if self.routes is not None:
-                self.show_processed_frame(frame, self.routes.dir)
+                self.show_processed_frame(frame, self.routes.data_dir)
             else:
                 self.show_processed_frame(frame)
 
     def button_xml_process(self):
+        if self.video_capture is None:
+            self.systerm_status_echo("视频未导入，请先导入视频！")
+            return
         if self.thread_running_flag:
             self.systerm_status_echo("视频处理中，请等待处理完成！")
             return
 
+        if self.developer_lock:
+            self.systerm_status_echo("功能暂不支持，请联系开发者！")
+            return
+
         if self.data_road_dir_ready:
             if self.data_xml_ready:
-                # 语义分割才能保存
                 self.routes.save_xml()
                 print('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
                 self.systerm_status_echo('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
@@ -426,145 +508,138 @@ class MainWindow(QWidget):
         else:
             self.xml_path, _ = QFileDialog.getOpenFileName(self, "选择XML文件", "", "路网文件 (*.xml)")
             if self.xml_path:
-                self.processed_video()
-                self.routes.dir = xml_to_dict_for_dir(self.xml_path)
-                self.show_processed_frame(self.show_current_frame, self.routes.dir)
-                self.btn_execute_video.setText("获取交通流参数")
+                self.routes.set_data_dir(xml_to_dict_for_dir(self.xml_path))
+                self.show_processed_frame(self.show_current_frame, self.routes.data_dir)
                 self.data_xml_ready = False
                 self.data_road_dir_ready = True
+                self.btn_xml_process.setText("道路结构已经导入")
                 self.systerm_status_echo('路网结构文件已导入！')
             else:
                 self.systerm_status_echo('未选择路网结构文件！')
 
-    def start_process_traffic_video(self):
+    def start_process_road(self):
+        if self.thread_running_flag:
+            self.systerm_status_echo("视频处理中，请耐心等待！")
+            return
+
+        if self.data_road_dir_ready:
+            self.systerm_status_echo("道路信息已经存在，请勿重复获取！")
+            return
+
+        # 先停止播放视频，并且确定当前画面为处理的画面
+        if self.video_played and not self.video_stopped:
+            self.button_video_play()
+
+        self.systerm_status_echo(f'请选择输出路径')
+        self.csv_path = QFileDialog.getExistingDirectory(self, "选择保存文件的文件夹", "")
+        if not self.csv_path:
+            self.systerm_status_echo('未选择路径！')
+            return
+        self.systerm_status_echo(f'选择的保存文件夹路径为: {self.csv_path}')
+
+        self.thread_get_road_lines = Thread(target=self.get_road_lines, args=())
+        self.thread_get_road_lines.start()
+        print('start_process_video')
+        self.thread_running_flag = True
+
+    def start_process_traffic(self):
         if self.thread_running_flag:
             self.systerm_status_echo("视频处理中，请耐心等待！")
             return
 
         if not self.data_road_dir_ready:
-            self.thread_get_road_lines = Thread(target=self.get_road_lines, args=())
-            self.thread_get_road_lines.start()
-            print('start_process_video')
-            self.thread_running_flag = True
-            self.btn_xml_process.setText("正在获取车道线信息")
-        else:
+            self.systerm_status_echo("请先获取道路结构信息！")
+            return
+
+        # 先停止播放视频，并且确定当前画面为处理的画面
+        if self.video_played and not self.video_stopped:
+            self.button_video_play()
+
+        if self.data_road_dir_ready:
             self.thread_get_traffic_out = Thread(target=self.get_traffic_out_csv, args=())
             self.thread_get_traffic_out.start()
             print('start_process_traffic')
             self.thread_running_flag = True
-            self.btn_xml_process.setText("正在获取交通流参数")
 
     def get_road_lines(self):
         processing_method_index = self.processing_method_combobox.currentIndex()
-        processing_case_index = self.processing_case.currentIndex()
         self.systerm_status_echo(f"正在获取车道线结构")
 
-        processed_frame = self.process_video(self.show_current_frame, processing_method_index,processing_case_index)
+        processed_frame = self.process_video(self.show_current_frame, processing_method_index)
         if processed_frame is not None:
             self.systerm_status_echo("车道线结构获取完成！")
         else:
             self.thread_running_flag = False
             self.data_road_dir_ready = False
-            self.systerm_status_echo("车道线结构获取失败！")
+            self.systerm_status_echo("车道线结构获取失败！请检查问题重新开始！")
+            self.btn_xml_process.setText("导入道路结构")
             return
-        self.show_processed_frame(processed_frame, self.routes.dir)
-        if self.processing_method_combobox.currentIndex() == 1:
-            self.data_xml_ready = True
-            self.btn_xml_process.setText("保存道路结构")
-        self.btn_execute_video.setText("获取交通流参数")
+        self.show_processed_frame(processed_frame, self.routes.data_dir)
+        self.btn_xml_process.setText("保存道路结构")
+        self.data_xml_ready = True
         self.data_road_dir_ready = True
         self.thread_running_flag = False
+        self.is_drawing_lane = False
 
-    def process_video(self, frame, method_index, case_index):
-        """
-        根据选择的不同方式对视频帧进行处理
-        """
+    def process_video(self, frame, method_index):
         try:
-            if method_index == 0:         # 方式1 手划线
+            time.sleep(0.1)
+            vid_save = self.save_case1.isChecked()
+            car_track_save = self.save_case2.isChecked()
+            car_num_save = self.save_case3.isChecked()
+            self.routes.initialication(vid_save, car_track_save, car_num_save, self.csv_path)
+            if method_index <= 3:         # 方式1 手划线
                 self.systerm_status_echo("请手动划车道线")
-                if case_index == 0:
-                    self.routes = Hand_Draw(self.video_path)
-                    if self.routes.speed_lane != 0:
-                        cv2.line(frame, self.routes.speed_lane[0][0], self.routes.speed_lane[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k + 1):
-                            cv2.line(frame, (self.routes.location[0][i][0], self.routes.location[0][i][1]),
-                                     (self.routes.location[1][i][0], self.routes.location[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-                    if self.routes.speed_lane2 != 0:
-                        cv2.line(frame, self.routes.speed_lane2[0][0], self.routes.speed_lane2[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k2 + 1):
-                            cv2.line(frame, (self.routes.location2[0][i][0], self.routes.location2[0][i][1]),
-                                     (self.routes.location2[1][i][0], self.routes.location2[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-                if case_index == 1:
-                    self.routes = Hand_Draw_Cross(self.video_path)
-                    if self.routes.speed_lane != 0:
-                        cv2.line(frame, self.routes.speed_lane[0][0], self.routes.speed_lane[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k + 1):
-                            cv2.line(frame, (self.routes.location[0][i][0], self.routes.location[0][i][1]),
-                                     (self.routes.location[1][i][0], self.routes.location[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-                    if self.routes.speed_lane1 != 0:
-                        cv2.line(frame, self.routes.speed_lane1[0][0], self.routes.speed_lane1[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k1 + 1):
-                            cv2.line(frame, (self.routes.location1[0][i][0], self.routes.location1[0][i][1]),
-                                     (self.routes.location1[1][i][0], self.routes.location1[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-                    if self.routes.speed_lane2 != 0:
-                        cv2.line(frame, self.routes.speed_lane2[0][0], self.routes.speed_lane2[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k2 + 1):
-                            cv2.line(frame, (self.routes.location2[0][i][0], self.routes.location2[0][i][1]),
-                                     (self.routes.location2[1][i][0], self.routes.location2[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-                    if self.routes.speed_lane3 != 0:
-                        cv2.line(frame, self.routes.speed_lane3[0][0], self.routes.speed_lane3[1][0], (0, 255, 0), 1)  # 绿色，1个像素宽度
-                        for i in range(self.routes.k3 + 1):
-                             cv2.line(frame, (self.routes.location3[0][i][0], self.routes.location3[0][i][1]),
-                                 (self.routes.location3[1][i][0], self.routes.location3[1][i][1]), [255, 0, 0], 1)  # 蓝色，3个像素宽度
-            elif method_index == 1:
-                # 方式2 语义分割
-                if case_index == 0:
-                    self.routes = Segmentation(self.video_path)
-                if case_index == 1:
-                    self.routes = Segmentation_Cross(self.video_path)
+                self.routes.Hand_Draw(method_index + 1, self)
+            elif method_index == 4:
+                raise NotImplementedError("暂不支持此方式！")
+                # self.routes = Segmentation(self.video_path)
+            elif method_index == 5:
+                raise NotImplementedError("暂不支持此方式！")
+                # self.routes = Segmentation_Cross(self.video_path)
             return frame
         except Exception as e:
-            self.systerm_status_echo(f"在处理 case_index={case_index} 时发生异常: {e}")
+            tb = traceback.format_exc()  # 获取完整的回溯信息
+            print(f"在处理时发生异常: {tb}")
+            self.systerm_status_echo(f"在处理时发生异常: {e}")
+            self.is_drawing_lane = False
+            time.sleep(0.1)
             return None
 
-    def processed_video(self):
-        if self.routes is not None:
-            print("self.routes is not None")
-        method_index = self.processing_method_combobox.currentIndex()
-        case_index = self.processing_case.currentIndex()
-        if method_index == 0:
-            if case_index == 0:
-                self.routes = None
-                # self.routes = Hand_Draw(self.video_path)
-            if case_index == 1:
-                self.routes = None
-                # self.routes = Hand_Draw_Cross(self.video_path)
-        elif method_index == 1:
-            if case_index == 0:
-                self.routes = None
-                # self.routes = Segmentation(self.video_path)
-            if case_index == 1:
-                self.routes = Segmentation_Cross()
-        return
+    def show_processed_frame(self, frame = None, frame_dir = None):
+        if frame is None:
+            frame = self.show_current_frame.copy()
 
-    def show_original_frame(self, frame):
-        height, width = frame.shape[:2]
-        bytes_per_line = 3 * width
-        q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888).rgbSwapped()
-        pixmap = QPixmap.fromImage(q_image)
-        scaled_pixmap = pixmap.scaled(self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        self.image_label.setPixmap(scaled_pixmap)
+        if not isinstance(frame, QPixmap):
+            if frame_dir is not None:
+                frame = draw_road_lines(frame, frame_dir, '')
+            height, width = frame.shape[:2]
+            bytes_per_line = 1 * width if len(frame.shape) == 2 else 3 * width
+            q_image_format = QImage.Format.Format_Grayscale8 if len(frame.shape) == 2 else QImage.Format.Format_RGB888
+            q_image = QImage(frame.data, width, height, bytes_per_line, q_image_format).rgbSwapped()
+            pixmap = QPixmap.fromImage(q_image)
+        else:
+            pixmap = frame
 
-    def show_processed_frame(self, frame, frame_dir = None):
-        if frame_dir is not None:
-            frame = draw_road_lines(frame, frame_dir, '')
-        height, width = frame.shape[:2]
-        bytes_per_line = 1 * width if len(frame.shape) == 2 else 3 * width
-        q_image_format = QImage.Format.Format_Grayscale8 if len(frame.shape) == 2 else QImage.Format.Format_RGB888
-        q_image = QImage(frame.data, width, height, bytes_per_line, q_image_format).rgbSwapped()
-        pixmap = QPixmap.fromImage(q_image)
-        scaled_pixmap = pixmap.scaled(self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        self.image_label.setPixmap(scaled_pixmap)
+        if self.image_draw_label is not None:
+            scaled_pixmap = pixmap.scaled(self.image_draw_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+            self.image_draw_label.setPixmap(scaled_pixmap)
+        else:
+            scaled_pixmap = pixmap.scaled(self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+            self.image_label.setPixmap(scaled_pixmap)
+
+
+    def show_processed_frame_later(self, frame, delay=1):
+        if self.multi_thread_lock:
+            return
+        if self.show_current_frame is not None:
+            self.timer_update_frame_flag = True
+            self.show_current_frame = frame.copy()
+            if not self.timer_update_frame.isActive():
+                self.timer_update_frame.start(delay)
+
 
     def stop_process(self):
         # self.routes.exit_process()
@@ -579,31 +654,85 @@ class MainWindow(QWidget):
 
     def get_traffic_out_csv(self):
         self.systerm_status_echo("正在获取交通流参数")
-        vid_save = self.save_case1.isChecked()
-        car_track_save = self.save_case2.isChecked()
-        car_num_save = self.save_case3.isChecked()
 
-        self.routes.get_ready(car_track_save,car_num_save, vid_save)
-        for terminal_text in self.routes.process():
-            self.text_edit.insertPlainText(terminal_text)
-            self.scroll_to_bottom()
-        self.thread_running_flag = False
-        print("get_traffic_out_csv\n")
+        try:
+            bounding_box_save = []
+            vid_save = self.save_case1.isChecked()
+            car_track_save = self.save_case2.isChecked()
+            car_num_save = self.save_case3.isChecked()
+            self.routes.initialication(vid_save, car_track_save, car_num_save, self.csv_path)
+            for terminal_text in self.routes.run():
+                if isinstance(terminal_text, np.ndarray):
+                    if terminal_text.ndim > 2:
+                        pass
+                        # bounding_frame = draw_bounding_boxes(terminal_text, bounding_box_save)
+                        # self.update_label_img_signal.emit(bounding_frame)
+                        # self.show_processed_frame_later(bounding_frame)
+                        # self.show_processed_frame(terminal_text)
+                    else:
+                        pass
+                        #bounding_box_save = terminal_text
+                if isinstance(terminal_text, str):
+                    self.systerm_status_echo(terminal_text)
+            self.thread_running_flag = False
+            print("get_traffic_out_csv\n")
+        except Exception as e:
+            tb = traceback.format_exc()  # 获取完整的回溯信息
+            print(f"在处理时发生异常: {tb}")
+            self.systerm_status_echo(f"在处理时发生异常: {e}")
+            time.sleep(0.1)
+            self.thread_running_flag = False
 
     def systerm_status_echo(self, text):
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.text_edit.insertPlainText(f"{current_time} " + text + "\n")
         self.scroll_to_bottom()
 
+    def set_scroll_to_bottom(self):
+        if not self.timer_scroll_txt_flag and not self.timer_scroll_txt.isActive():
+            self.timer_scroll_txt.start()
+            self.timer_scroll_txt_flag = True
+
     def scroll_to_bottom(self):
         scroll_bar = self.text_edit.verticalScrollBar()
         scroll_bar.setValue(scroll_bar.maximum())
+        self.timer_scroll_txt_flag = False
 
+def select_random_theme():
+    themes = ['dark_amber.xml', 'dark_blue.xml', 'dark_cyan.xml', 'dark_lightgreen.xml', 'dark_medical.xml',
+              'dark_pink.xml', 'dark_purple.xml', 'dark_red.xml', 'dark_teal.xml', 'dark_yellow.xml']
+    # themes = ['dark_amber.xml', 'dark_blue.xml', 'dark_cyan.xml', 'dark_lightgreen.xml', 'dark_medical.xml',
+    #           'dark_pink.xml', 'dark_purple.xml', 'dark_red.xml', 'dark_teal.xml', 'dark_yellow.xml',
+    #           'light_amber.xml', 'light_blue.xml', 'light_blue_500.xml', 'light_cyan.xml', 'light_cyan_500.xml',
+    #           'light_lightgreen.xml', 'light_lightgreen_500.xml', 'light_orange.xml', 'light_pink.xml',
+    #           'light_pink_500.xml', 'light_purple.xml', 'light_purple_500.xml', 'light_red.xml', 'light_red_500.xml',
+    #           'light_teal.xml', 'light_teal_500.xml', 'light_yellow.xml']
+    return random.choice(themes)
+
+
+def check_files_in_directory(directory_path, required_files):
+    """检查目录中是否包含所有必需的文件"""
+    if not os.path.isdir(directory_path):
+        print(f"错误: 目录 {directory_path} 不存在！")
+        return
+    existing_files = set(os.listdir(directory_path))
+    missing_files = [file for file in required_files if file not in existing_files]
+
+    if missing_files:
+        print(f"错误: 目录 {directory_path} 中缺少以下文件: {', '.join(missing_files)}")
+
+def system_check_files():
+    check_files_in_directory('config', ['deep_sort.yaml'])
+    check_files_in_directory('weights', ['best.pt', 'best407_att.pt', 'ckpt.t7'])
 
 
 if __name__ == "__main__":
+    system_check_files()
     app = QApplication(sys.argv)
     apply_stylesheet(app, theme='dark_teal.xml')
+    # selected_theme = select_random_theme()
+    # print(f"selected_theme: {selected_theme}")
+    # apply_stylesheet(app, theme=selected_theme)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

@@ -1,10 +1,9 @@
 import math
-import os
-
-from haversine import haversine, Unit
+from haversine import haversine
 import cv2
 import numpy as np
 global point1, point2
+from utils.hand_draw_utils import lanemark
 
 
 class PixelMapper(object):
@@ -205,74 +204,6 @@ def frames_to_timecode(framerate, frames):
     # return '{0:02d}:{1:02d}:{2:02d}'.format(int(frames / (3600 * framerate)),
     #                                         int(frames / (60 * framerate) % 60),
     #                                         int(frames / framerate % 60))
-
-
-# global record1, record2
-# record1 = []
-# record2 = []
-
-def lanemark(img):
-  def on_mouse(event, x, y, flags, param):
-    global  point1, point2
-    img2 = img.copy()
-    # 左键点击
-    if event == cv2.EVENT_LBUTTONDOWN:
-      point1 = (x, y)
-      record1.append(point1)
-      cv2.circle(img2, point1, 10, (0, 255, 0), 2)
-      for i in range(np.array(record2).shape[0]):
-        cv2.line(img2, record1[i], record2[i], (0, 0, 255), 2)  # 画之前划过的线
-      cv2.imshow('image', img2)
-    # 按住左键拖曳
-    elif event == cv2.EVENT_MOUSEMOVE and (flags & cv2.EVENT_FLAG_LBUTTON):  # 按住左键拖曳
-      for i in range(np.array(record2).shape[0]):
-        cv2.line(img2, record1[i], record2[i], (0, 0, 255), 2)
-      cv2.line(img2, point1, (x, y), (255, 0, 0), 2)  # 显示拖拽时上一次左键点击和点钱拖拽点间的连线
-      cv2.imshow('image', img2)
-    # 左键释放
-    elif event == cv2.EVENT_LBUTTONUP:
-      point2 = (x, y)
-      record2.append(point2)
-      for i in range(np.array(record1).shape[0]):
-        cv2.line(img2, record1[i], record2[i], (0, 0, 255), 2)
-
-      cv2.imshow('image', img2)
-      # min_x = min(point1[0], point2[0])
-      # min_y = min(point1[1], point2[1])
-      # width = abs(point1[0] - point2[0])
-      # height = abs(point1[1] - point2[1])
-      # cut_img = img[min_y:min_y + height, min_x:min_x + width]
-      #cv2.imwrite('lena3.jpg', cut_img)
-    # 中键点击（撤销画的上一条线）
-    elif event == cv2.EVENT_MBUTTONDOWN:
-      record1.pop(np.array(record1).shape[0] - 1)
-      record2.pop(np.array(record2).shape[0] - 1)
-      for i in range(np.array(record1).shape[0]):
-        cv2.line(img2, record1[i], record2[i], (0, 0, 255), 2)
-      cv2.imshow('image', img2)
-
-
-  WIDTH = cv2.CAP_PROP_FRAME_WIDTH
-  HEIGHT = cv2.CAP_PROP_FRAME_HEIGHT
-
-  record = []
-  record1 = []
-  record2 = []
-  cv2.namedWindow('image')
-  cv2.setMouseCallback('image', on_mouse)
-  cv2.imshow('image', img)
-  cv2.waitKey(0)
-  cv2.destroyAllWindows()
-  record.append(record1)
-  record.append(record2)
-
-  if record ==[[],[]]:
-    record = ' '
-  else:
-      print('The Location has been marked successfully ')
-      print('lane(location)', record)
-
-  return record
 
 
 # 获取直线起始，结束点
@@ -741,6 +672,39 @@ def draw_boxes(img, bbox, cls_names, classes2, identities=None, last_ids_info={}
             cv2.putText(img, label, (x1, y1 + t_size[1] + 4), cv2.FONT_HERSHEY_PLAIN, 1, [255, 255, 255], 1)
 
     return img
+
+
+def draw_bounding_boxes(img, detections, color=(0, 255, 0), thickness=2):
+    """
+    在图像上绘制YOLO检测结果的边界框
+
+    参数:
+        img (ndarray): 原始图像数组，格式为HWC（高度、宽度、通道）
+        detections (ndarray): YOLO检测结果数组，每行格式为[x1, y1, x2, y2, ...]
+        color (tuple): BGR颜色值，默认为绿色
+        thickness (int): 边界框线宽，默认为2像素
+
+    返回:
+        ndarray: 带有边界框标注的图像数组
+    """
+    # 创建图像副本避免修改原始图像
+    img_with_boxes = img.copy()
+
+    # 遍历所有检测结果
+    for detection in detections:
+        # 提取坐标并转换为整数
+        x1, y1, x2, y2 = detection[:4].astype(int)
+
+        # 绘制矩形框
+        cv2.rectangle(
+            img_with_boxes,
+            (x1, y1),  # 左上角坐标
+            (x2, y2),  # 右下角坐标
+            color,  # 颜色
+            thickness  # 线宽
+        )
+
+    return img_with_boxes
 
 
 if __name__ == '__main__':

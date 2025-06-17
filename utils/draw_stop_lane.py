@@ -1,12 +1,5 @@
 import cv2
-import numpy as np
-import itertools
 import math
-
-# from unet.lanes_fit import find_intersection
-
-
-
 
 # 计算两点之间的距离
 def distance(point1, point2):
@@ -115,71 +108,6 @@ def draw_road_lines(frame, dir, last_frame_info):
 
     return frame
 
-
-
-
-# def get_intersections(fits_s, fits_l, stop_numbers, d):
-#     out = []
-#     dirs_ = []
-#     for index, fit_s in enumerate(fits_s):
-#         def stop(x):
-#             return fit_s[1] + fit_s[0] * x
-#
-#         intersection_points = []
-#         dirs = []
-#         for index_l, stop_number in enumerate(stop_numbers):
-#             if stop_number == index:
-#                 fit_l = fits_l[index_l]
-#                 def lane(x):
-#                     return fit_l[1] + fit_l[0] * x
-#
-#                 intersection_point = find_intersection(stop, lane)
-#                 intersection_points.append(intersection_point)
-#                 dir = d[index_l]
-#                 dirs.append(dir)
-#
-#         out.append(intersection_points)
-#         dirs_.append(dirs)
-#
-#     return out, dirs_
-
-
-# 对路口
-# def get_roi(intersections, dirs_, video_width, video_height):
-#     # ranges = []
-#     zone = []
-#     zone1 = []
-#     # d = []
-#     for intersection_point, dirs in zip(intersections, dirs_):
-#         x_min = int(min(intersection[0] for intersection in intersection_point))
-#         x_max = int(max(intersection[0] for intersection in intersection_point))
-#         y_min = int(min(intersection[1] for intersection in intersection_point))
-#         y_max = int(max(intersection[1] for intersection in intersection_point))
-#
-#         if dirs[0] == 1:
-#             x_max = video_width
-#         if dirs[0] == 2:
-#             y_max = video_height
-#         if dirs[0] == 3:
-#             x_min = 0
-#         if dirs[0] == 4:
-#             y_min = 0
-#
-#         # ranges.append((x_min,x_max,y_min,y_max))
-#         # d.append(dirs[0])
-#         zone.append([x_min,y_min])
-#         zone.append([x_max,y_min])
-#         zone1.append([x_max,y_max])
-#         zone1.append([x_min,y_max])
-#
-#
-#
-#     zone += zone1[::-1]
-#
-#     return np.array(zone)
-
-
-
 def get_roi(dir):
     ranges = []
     width_sum = 0
@@ -209,7 +137,6 @@ def get_roi(dir):
         range_dir.append((x_min,y_max))
         ranges.append(range_dir)
 
-    # ranges = np.array(ranges)
     mean_lane = width_sum / len(dir)  # 一个车道宽3m，对应的像素
     scale = 3 / mean_lane
 
@@ -285,8 +212,6 @@ def y2id(y,y_l):
             break
 
     return id
-
-
 
 
 def renew_k(ls,ds):

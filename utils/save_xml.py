@@ -1,8 +1,6 @@
 import math
 import xml.etree.ElementTree as ET
 
-import numpy as np
-
 
 def write_routes(child,dir_id,lane_num,length,points,mode):
     route = ET.SubElement(child, 'route')
@@ -196,9 +194,9 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
         y1 = (points_ends[0][1] + points_ends[-1][1]) / 2
         points = transform([x1, y1, x2, y2], scale)
         points_write = ', '.join(points)
-        nodes = write_routes(child1, dir_id, len(dir[dir_id]) - 7, length, points_write, mode='in')  # 进口道
+        nodes = write_routes(child1, dir_id, len(dir[dir_id]) - 5, length, points_write, mode='in')  # 进口道
 
-        for lane_id in range(1, len(dir[dir_id]) - 6):
+        for lane_id in range(1, len(dir[dir_id]) - 5 + 1):
             # write_lanes(child2, dir_id, lane_id, nodes, direction_write, RealLineLens[lane_id - 1],RealLineLens[lane_id])
             write_lanes(child2, dir_id, lane_id, nodes, direction_write, length,length)
 
@@ -233,7 +231,7 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
             out_left_y2_re = max(round(y1*scale - fit_stop[0] * move_dis / math.sqrt(fit_stop[0] ** 2 + 1),1),0)
             out_left_x1_re = max(round(x2*scale - move_dis / math.sqrt(fit_stop[0] ** 2 + 1),1),0)
             out_left_y1_re = max(round(y2*scale - fit_stop[0] * move_dis / math.sqrt(fit_stop[0] ** 2 + 1),1),0)
-        route_out[dir_id + 1 + len(dir)][0] = [out_left_x1_re, out_left_y1_re, out_left_x2_re, out_left_y2_re]
+        route_out[dir_id + 1 + len(dir)][0] = [out_left_x1_re, out_left_y1_re, out_left_x2_re, out_left_y2_re] # 出口道最左侧4点坐标
 
         for lane_id in range(1, reverse_lane_num +1):
             if direction <= 2:

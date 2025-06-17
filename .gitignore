@@ -1,8 +1,24 @@
 build/
-deep_sort/
 dist/
-output/
+inference/
 source/
 unet/
 weights/
-yolov7/
+*.pt
+*.t7
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+ *.pyo
+ *.pyd
+
+ # Logs and databases
+ *.log
+ *.sql
+ *.sqlite
+
+ # IDEs and editors
+ .idea/
+ .vscode/
+ *.iml

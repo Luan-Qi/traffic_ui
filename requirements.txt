@@ -45,7 +45,10 @@ haversine
 moviepy
 easydict
 scikit-learn
+qt_material
+ultralytics
+lap
 
 #Unet
-#h5py==2.10.0
-#labelme==3.16.7
+h5py
+labelme
