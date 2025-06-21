@@ -494,13 +494,17 @@ class MainWindow(QWidget):
             self.systerm_status_echo("视频处理中，请等待处理完成！")
             return
 
-        if self.developer_lock:
-            self.systerm_status_echo("功能暂不支持，请联系开发者！")
-            return
+        # if self.developer_lock:
+        #     self.systerm_status_echo("功能暂不支持，请联系开发者！")
+        #     return
 
         if self.data_road_dir_ready:
             if self.data_xml_ready:
-                self.routes.save_xml()
+                self.xml_path = QFileDialog.getExistingDirectory(self, "选择保存路网的文件夹", "")
+                if not self.xml_path:
+                    self.systerm_status_echo('未选择路径！')
+                    return
+                self.routes.save_xml(self.xml_path, 1)
                 print('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
                 self.systerm_status_echo('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
             else:
@@ -508,7 +512,8 @@ class MainWindow(QWidget):
         else:
             self.xml_path, _ = QFileDialog.getOpenFileName(self, "选择XML文件", "", "路网文件 (*.xml)")
             if self.xml_path:
-                self.routes.set_data_dir(xml_to_dict_for_dir(self.xml_path))
+                self.routes.Data_Dir_Import(xml_to_dict_for_dir(self.xml_path))
+
                 self.show_processed_frame(self.show_current_frame, self.routes.data_dir)
                 self.data_xml_ready = False
                 self.data_road_dir_ready = True
@@ -530,13 +535,6 @@ class MainWindow(QWidget):
         if self.video_played and not self.video_stopped:
             self.button_video_play()
 
-        self.systerm_status_echo(f'请选择输出路径')
-        self.csv_path = QFileDialog.getExistingDirectory(self, "选择保存文件的文件夹", "")
-        if not self.csv_path:
-            self.systerm_status_echo('未选择路径！')
-            return
-        self.systerm_status_echo(f'选择的保存文件夹路径为: {self.csv_path}')
-
         self.thread_get_road_lines = Thread(target=self.get_road_lines, args=())
         self.thread_get_road_lines.start()
         print('start_process_video')
@@ -554,6 +552,13 @@ class MainWindow(QWidget):
         # 先停止播放视频，并且确定当前画面为处理的画面
         if self.video_played and not self.video_stopped:
             self.button_video_play()
+
+        self.systerm_status_echo('请选择输出路径')
+        self.csv_path = QFileDialog.getExistingDirectory(self, "选择保存车流的文件夹", "")
+        if not self.csv_path:
+            self.systerm_status_echo('未选择路径！')
+            return
+        self.systerm_status_echo(f'选择的保存文件夹路径为: {self.csv_path}')
 
         if self.data_road_dir_ready:
             self.thread_get_traffic_out = Thread(target=self.get_traffic_out_csv, args=())
@@ -587,16 +592,16 @@ class MainWindow(QWidget):
             vid_save = self.save_case1.isChecked()
             car_track_save = self.save_case2.isChecked()
             car_num_save = self.save_case3.isChecked()
-            self.routes.initialication(vid_save, car_track_save, car_num_save, self.csv_path)
+            self.routes.initialication(vid_save, car_track_save, car_num_save)
             if method_index <= 3:         # 方式1 手划线
                 self.systerm_status_echo("请手动划车道线")
                 self.routes.Hand_Draw(method_index + 1, self)
             elif method_index == 4:
-                raise NotImplementedError("暂不支持此方式！")
-                # self.routes = Segmentation(self.video_path)
+                # raise NotImplementedError("暂不支持此方式！")
+                self.routes.Segmentation()
             elif method_index == 5:
-                raise NotImplementedError("暂不支持此方式！")
-                # self.routes = Segmentation_Cross(self.video_path)
+                # raise NotImplementedError("暂不支持此方式！")
+                self.routes.Segmentation_Cross()
             return frame
         except Exception as e:
             tb = traceback.format_exc()  # 获取完整的回溯信息

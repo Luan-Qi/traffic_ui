@@ -7,6 +7,11 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 
+from PIL import Image
+from unet.highway_selectbeforefit import fit_lanes as fit_lanes_line
+from unet.cross import fit_lanes as fit_lanes_cross
+from unet.predict import predict_road_pixel
+
 from ultralytics.utils.downloads import attempt_download_asset
 from ultralytics.utils.checks import check_imgsz
 from ultralytics.utils.torch_utils import select_device
@@ -320,6 +325,17 @@ def draw_lanes_in_pic(img, windows):
             **dir_1
             }
 
+def fix_dir_data(dir_data):
+    for dir_id in range(len(dir_data)):
+        lane_num = sum(1 for key in dir_data[dir_id].keys() if key.startswith('Line')) - 1
+        cars_in_lane = {i: set() for i in range(lane_num)}
+        traffic_volume = np.zeros(lane_num, np.int32)
+
+        dir_data[dir_id]['cars'] = cars_in_lane
+        dir_data[dir_id]['traffic_volume'] = traffic_volume
+        dir_data[dir_id]['lane_num'] = lane_num
+    return dir_data
+
 
 def get_roi(dir):
     ranges = []
@@ -331,13 +347,12 @@ def get_roi(dir):
         y2 = dir[dir_id]['stop']['points'][0][1]
         xx2 = dir[dir_id]['stop']['points'][1][0]
         yy2 = dir[dir_id]['stop']['points'][1][1]
-        for line_id in range(len(dir[dir_id]) -9):
-            if line_id == 0:
-                x1 = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1][0]
-                y1 = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1][1]
-            if line_id == len(dir[dir_id]) - 10:
-                xx1 = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1][0]
-                yy1 = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1][1]
+        # 假设dir[dir_id]是一个字典
+        line_keys_count = sum(1 for key in dir[dir_id].keys() if key.startswith('Line'))
+        x1 = dir[dir_id]['Line0']['L1']['points'][1][0]
+        y1 = dir[dir_id]['Line0']['L1']['points'][1][1]
+        xx1 = dir[dir_id]['Line' + str(line_keys_count-1)]['L1']['points'][1][0]
+        yy1 = dir[dir_id]['Line' + str(line_keys_count-1)]['L1']['points'][1][1]
 
         x_min = min(x1,xx1,x2,xx2)
         x_max = max(x1,xx1,x2,xx2)
@@ -357,7 +372,8 @@ def get_roi(dir):
     return ranges, scale
 
 class VehicleTracker:
-    def __init__(self, video_path, car_track_save = False, car_num_save = False, vid_save = False):
+    def __init__(self, video_path, vid_save = False, car_track_save = False, car_num_save = False):
+        self.out_num_dist = None
         self.dir_num = 0
 
         # 配置参数
@@ -401,6 +417,7 @@ class VehicleTracker:
         self.csv_speed, self.vid_name = None, None
 
         # 初始化变量
+        self.xmlfile = None
         self.data_dir = {}
         self.this_frame_info = {}
         self.last_frame_info = {}
@@ -410,7 +427,7 @@ class VehicleTracker:
         self.run_init_dir = False
         self.run_init_video = False
 
-    def initialication(self, car_track_save, car_num_save, vid_save, out_path = None):
+    def initialication(self, vid_save, car_track_save, car_num_save, out_path = None):
         self.save_vid = vid_save
         self.save_csv = car_num_save
         self.save_csv_speed = car_track_save
@@ -430,12 +447,120 @@ class VehicleTracker:
             self.dataset = LoadImagesAndVideos(self.source)
         self.run_init_video = True
 
-    def set_data_dir(self, data):
+    def Data_Dir_Import(self, data):
         self.data_dir = data
         self.run_init_dir = True
+        self.scale = 3.75 / self.data_dir[0]['lane_width']
+        self.dir_num = len(data)
 
     def Hand_Draw(self, dir_num, windows):
+        if self.run_init_dir:
+            raise ValueError("程序异常，请联系开发者(Hand_Draw)")
+
         self.dir_num = dir_num
+
+        for frame_idx, (path, im0s, _) in enumerate(self.dataset):
+            im0s = np.array(im0s).squeeze()
+            for i in range(self.dir_num):
+                windows.systerm_status_echo(f"请绘制第{i + 1}条道路的车道线")
+                self.data_dir[i] = draw_lanes_in_pic(im0s, windows)
+            self.scale = 3.75 / self.data_dir[0]['lane_width']
+            break  # 仅初始化第一帧即可
+
+        self.run_init_dir = True
+
+        return self.data_dir
+
+    def Segmentation(self):
+        # 文件加载
+        video = cv2.VideoCapture(self.source)
+
+        # 保存路径根地址
+        frame_index = 0
+        dir_data, dir_num_data, out_num, scale = None, None, None, None
+        ref, frame = video.read()
+        if not ref:
+            raise ValueError("未能正确读取视频，请注意是否正确填写视频路径。")
+        while video.isOpened:
+            ref, frame = video.read()
+            if not ref:
+                break
+            if frame_index == 0:  # 选择没有白车在停止线上的帧进行处理
+                # print('正在获取车道线信息')
+                # cv2.imwrite('index2.jpg', frame)
+                image = Image.fromarray(frame)
+                image_l, image_s, image_x, image_lx = predict_road_pixel(image)
+                # image_l.save("img_l.jpg")
+                # image_s.save("img_s.jpg")
+                # image_x.save("img_x.jpg")
+                # image_lx.save("img_lx.jpg")
+                image_s = np.array(image_s)
+                # image_l = np.array(image_l)
+                # image_x = np.array(image_x)
+                image_lx = np.array(image_lx)
+                dir_data, out_num, size = fit_lanes_line(image_s, frame, image_lx)
+                roi_zone, scale = get_roi(dir_data)
+                # size = [size[0] * self.scale, size[1] * self.scale]
+
+                break
+        video.release()
+        if dir_data is not None:
+            dir_data = fix_dir_data(dir_data)
+            self.data_dir = dir_data
+            self.dir_num = len(dir_data)
+            self.out_num_dist = out_num
+            self.scale = scale
+            self.run_init_dir = True
+
+    def Segmentation_Cross(self):
+        # 文件加载
+        video = cv2.VideoCapture(self.source)
+
+        # 保存路径根地址
+        frame_index = 0
+        dir_data, dir_num_data, out_num, scale = None, None, None, None
+        ref, frame = video.read()
+        if not ref:
+            raise ValueError("未能正确读取视频，请注意是否正确填写视频路径。")
+        while video.isOpened:
+            ref, frame = video.read()
+            if not ref:
+                break
+            if frame_index == 0:  # 选择没有白车在停止线上的帧进行处理
+                # print('正在获取车道线信息')
+                # cv2.imwrite('index2.jpg', frame)
+                image = Image.fromarray(frame)
+                image_l, image_s, image_x, image_lx = predict_road_pixel(image)
+                # image_l.save("img_l.jpg")
+                # image_s.save("img_s.jpg")
+                # image_x.save("img_x.jpg")
+                # image_lx.save("img_lx.jpg")
+                image_s = np.array(image_s)
+                image_l = np.array(image_l)
+                image_x = np.array(image_x)
+                # image_lx = np.array(image_lx)
+                # self.dir,self.out, self.size = fit_lanes(image_s, frame, image_lx)
+                dir_data, out_num, size = fit_lanes_cross(image_s, frame, image_l, image_x)
+                roi_zone, scale = get_roi(dir_data)
+                # size = [size[0] * scale, size[1] * scale]
+                # frame0 = roi_mask(frame, self.roi_zone)
+                # frame = draw_road_lines(frame, self.dir,'')
+                # cv2.imwrite('output_image.jpg', frame)
+
+                break
+        video.release()
+        if dir_data is not None:
+            dir_data = fix_dir_data(dir_data)
+            self.data_dir = dir_data
+            self.dir_num = len(dir_data)
+            self.out_num_dist = out_num
+            self.scale = scale
+            self.run_init_dir = True
+
+    def run(self):
+        if self.run_init_video == False or self.run_init_dir == False:
+            raise -1
+
         self.t0 = time.time()
         file_name = os.path.splitext(Path(self.source).name)[0]
 
@@ -445,34 +570,20 @@ class VehicleTracker:
         self.csv_speed = f"{self.out}/{file_name}_speed_{datetime.datetime.now():%Y-%m-%d_%H.%M.%S}.csv"
         self.vid_name = f"{self.out}/{file_name}.mp4"
 
-        for frame_idx, (path, im0s, _) in enumerate(self.dataset):
-            im0s = np.array(im0s).squeeze()
+        # 初始化csv文件
+        if self.save_csv:
             for i in range(self.dir_num):
-                windows.systerm_status_echo(f"请绘制第{i + 1}条道路的车道线")
-                self.data_dir[i] = draw_lanes_in_pic(im0s, windows)
-            self.scale = 3.75 / self.data_dir[0]['lane_width']
+                with open(self.csv_name[i], 'w', newline='') as f:
+                    fnames = ['时间'] + [f"车道{j}车流量" for j in range(len(self.data_dir[i]['traffic_volume']))]
+                    writer = csv.DictWriter(f, fieldnames=fnames)
+                    writer.writeheader()
+        if self.save_csv_speed:
+            with open(self.csv_speed, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["frame", "vehicle_id", "vehicle_type", "dir_id", "lane_id", "position_x(m)",
+                                 "position_y(m)", "long(m)", "height(m)", "xVelocity(km/h)", "yVelocity(km/h)"])
 
-            # 初始化csv文件
-            if self.save_csv:
-                for i in range(self.dir_num):
-                    with open(self.csv_name[i], 'w', newline='') as f:
-                        fnames = ['时间'] + [f"车道{j}车流量" for j in range(len(self.data_dir[i]['traffic_volume']))]
-                        writer = csv.DictWriter(f, fieldnames=fnames)
-                        writer.writeheader()
-            if self.save_csv_speed:
-                with open(self.csv_speed, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["frame", "vehicle_id", "vehicle_type", "dir_id", "lane_id", "position_x(m)",
-                                     "position_y(m)", "long(m)", "height(m)", "xVelocity(km/h)", "yVelocity(km/h)"])
-            break  # 仅初始化第一帧即可
 
-        self.run_init_dir = True
-
-        return self.data_dir
-
-    def run(self):
-        if self.run_init_video == False or self.run_init_dir == False:
-            raise -1
         # DeepSORT 初始化
         cfg = get_config()
         cfg.merge_from_file(self.config_deepsort)
@@ -777,26 +888,41 @@ class VehicleTracker:
             self.vid_writer.release()
             outstr += f"视频结果保存在{os.path.abspath(f'{self.out}/{file_name}.mp4')}\n"
         if self.save_csv_speed:
-            print('Results saved to %s' % os.getcwd() + os.sep + self.out)
             outstr += f"轨迹结果保存在{os.path.abspath(f'{self.out}/{file_name}_speed_{datetime.datetime.now():%Y-%m-%d_%H.%M.%S}.csv')}\n"
         # 车流量统计csv
         if self.save_csv:
             for i in range(self.dir_num):
                 csvfilepath = os.path.abspath(f"{self.out}/{file_name}_dir{i}_{datetime.datetime.now():%Y-%m-%d_%H.%M.%S}.csv")
                 outstr += f"流量结果保存在{csvfilepath}\n"
+        print('Results saved to %s' % self.out)
 
         if outstr.endswith('\n'):
             outstr = outstr.rstrip('\n')
 
         yield outstr
 
-    def save_xml(self):
+    def save_xml(self, out_path = None, mode = 0):
         file_name = os.path.splitext(os.path.basename(self.source))[0]
-        self.xmlfile = './output/' + file_name + '_lane.xml'
-        write_roads(self.data_dir, self.scale, self.xmlfile)
+        if out_path is not None:
+            self.xmlfile = out_path + '/' + file_name + '_lane.xml'
+        else:
+            self.xmlfile = './output/' + file_name + '_lane.xml'
 
-        self.xmlfile = self.root + file_name + '_cross.xml'
-        write_crosses(self.data_dir, self.scale, self.out, self.scale, self.xmlfile)
+        directory = os.path.dirname(self.xmlfile)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        road_rules = {  # dir_id:lane_id:rule
+            0: {1: ['left', 'straight'], 2: ['right']},
+            1: {1: ['left'], 2: ['left'], 3: ['straight'], 4: ['straight', 'right']},
+            2: {1: ['left'], 2: ['right'], 3: ['straight', 'right']},
+            3: {1: ['left'], 2: ['straight'], 3: ['right']}
+        }
+
+        if mode == 0:
+            write_roads(self.data_dir, self.scale, self.xmlfile)
+        else:
+            write_crosses(self.data_dir, road_rules, self.out_num_dist, self.scale, self.xmlfile)
 
 
 

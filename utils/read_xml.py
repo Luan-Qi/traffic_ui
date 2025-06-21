@@ -17,6 +17,18 @@ def convert_value(text):
 
 
 def convert_value_with_numpy(text):
+    # 优先判断是否是 set() 或 set([...])
+    if text == 'set()':
+        return set()
+    if text.startswith('set([') and text.endswith('])'):
+        try:
+            # 安全解析 set([1, 2, 3]) 结构
+            inner = text[4:]  # 去掉前缀 'set'
+            parsed = ast.literal_eval(inner)
+            return set(parsed)
+        except (ValueError, SyntaxError):
+            pass
+
     try:
         return ast.literal_eval(text)
     except (ValueError, SyntaxError, AttributeError):
@@ -52,10 +64,14 @@ def parse_element(element):
     data = {}
     for child in element:
         # 递归处理子元素
-        if len(child) > 0 or child.attrib:
+        if len(child) > 0:
             value = parse_element(child)
         else:
-            value = convert_value_with_numpy(child.text)
+            if child.attrib:
+                data[convert_value(child.attrib['key'])] = convert_value_with_numpy(child.text)
+                continue
+            else:
+                value = convert_value_with_numpy(child.text)
 
         # 处理重复键（将值转换为列表）
         if child.tag in data:

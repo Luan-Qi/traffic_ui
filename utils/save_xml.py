@@ -102,15 +102,24 @@ def write_nodes(child):
     route.set('type', "priority")
 
 
+
 def build_xml_element(parent, data):
     for key, value in data.items():
-        key = str(key)
-        if isinstance(value, dict):
-            child = ET.SubElement(parent, key)
-            build_xml_element(child, value)
+        if isinstance(key, int) and 0 <= key <= 9:
+            child = ET.SubElement(parent, 'entry')
+            child.set('key', str(key))
+            if isinstance(value, dict):
+                build_xml_element(child, value)
+            else:
+                child.text = str(value)
         else:
-            child = ET.SubElement(parent, key)
-            child.text = str(value)
+            key = str(key)
+            if isinstance(value, dict):
+                child = ET.SubElement(parent, key)
+                build_xml_element(child, value)
+            else:
+                child = ET.SubElement(parent, key)
+                child.text = str(value)
 
 def save_dict_to_xml(child, data):
     for item_key, item_value in data.items():
@@ -139,7 +148,7 @@ def write_roads(dir,scale,outputpath):
 
         points_ends = []
         RealLineLens = []
-        for line_id in range(len(dir[dir_id])-6):
+        for line_id in range(len(dir[dir_id])-9):
             lines_start = dir[dir_id]['Line' + str(line_id)]['L1']['points'][0]
             lines_end = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1]
             RealLineLen = round(math.sqrt((lines_start[0] - lines_end[0])**2 + (lines_start[1] - lines_end[1])**2) * scale,1)
@@ -153,8 +162,11 @@ def write_roads(dir,scale,outputpath):
         points_write = ', '.join(points)
         nodes = write_routes(child1,dir_id,len(dir[dir_id])-7,length,points_write,mode='no')  # 不需要两端路口
 
-        for lane_id in range(1,len(dir[dir_id])-6):
+        for lane_id in range(1,len(dir[dir_id])-9):
             write_lanes(child2,dir_id,lane_id,nodes,direction_write,RealLineLens[lane_id-1],RealLineLens[lane_id])
+
+    child3 = ET.SubElement(root, 'dir')
+    write_dir(child3, dir)
 
     # 将元素写入文件
     tree = ET.ElementTree(root)
@@ -173,6 +185,7 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
     child1 = ET.SubElement(root, 'routes')
     child2 = ET.SubElement(root, 'lanes')
     for dir_id in range(len(dir)):
+        line_keys_count = sum(1 for key in dir[dir_id].keys() if key.startswith('Line'))
         route_out[dir_id+1+len(dir)] = {}
         direction = dir[dir_id]['direction']
         direction_write = str(5 - direction)
@@ -183,7 +196,7 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
 
         points_ends = []
         RealLineLens = []
-        for line_id in range(len(dir[dir_id]) - 6):
+        for line_id in range(line_keys_count):
             lines_start = dir[dir_id]['Line' + str(line_id)]['L1']['points'][0]
             lines_end = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1]
             RealLineLen = round(math.sqrt((lines_start[0] - lines_end[0]) ** 2 + (lines_start[1] - lines_end[1]) ** 2) * scale, 1)
@@ -196,7 +209,7 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
         points_write = ', '.join(points)
         nodes = write_routes(child1, dir_id, len(dir[dir_id]) - 5, length, points_write, mode='in')  # 进口道
 
-        for lane_id in range(1, len(dir[dir_id]) - 5 + 1):
+        for lane_id in range(1, line_keys_count):
             # write_lanes(child2, dir_id, lane_id, nodes, direction_write, RealLineLens[lane_id - 1],RealLineLens[lane_id])
             write_lanes(child2, dir_id, lane_id, nodes, direction_write, length,length)
 
@@ -319,12 +332,9 @@ def write_crosses(dir,rules,out_num,scale,outputpath):
     child5 = ET.SubElement(root, 'dir')
     write_dir(child5, dir)
 
-
-
     # 将元素写入文件
     tree = ET.ElementTree(root)
     tree.write(outputpath, encoding='utf-8', xml_declaration=True)  # 写入文件并添加XML声明
-
 
 
 if __name__ == '__main__':

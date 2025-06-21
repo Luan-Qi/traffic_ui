@@ -2,10 +2,10 @@ build/
 dist/
 inference/
 source/
-unet/
 weights/
 *.pt
 *.t7
+*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -22,3 +22,4 @@ __pycache__/
 .idea/
 .vscode/
 *.iml
+.jpg
