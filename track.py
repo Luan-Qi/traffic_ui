@@ -262,7 +262,7 @@ def draw_lanes_in_pic(img, windows):
     print('lane(location)', location)
     # 标记路口测停止线（1条）
     print('Please mark the speed lane!')
-    windows.systerm_status_echo("请绘制其停止线！")
+    windows.system_echo_signal.emit("请绘制其停止线！")
     count_line = calculate_speedlane(img, windows)
     count_line = np.concatenate((count_line[0][0], count_line[1][0]))   # xyxy
     print('The speed lane has been marked successfully ')
@@ -330,10 +330,12 @@ def fix_dir_data(dir_data):
         lane_num = sum(1 for key in dir_data[dir_id].keys() if key.startswith('Line')) - 1
         cars_in_lane = {i: set() for i in range(lane_num)}
         traffic_volume = np.zeros(lane_num, np.int32)
+        crosspoint = [dir_data[dir_id]['Line' + str(line_id)]['L1']['points'][0] for line_id in range(lane_num+1)]
 
         dir_data[dir_id]['cars'] = cars_in_lane
         dir_data[dir_id]['traffic_volume'] = traffic_volume
         dir_data[dir_id]['lane_num'] = lane_num
+        dir_data[dir_id]['crosspoint'] = crosspoint
     return dir_data
 
 
@@ -462,7 +464,7 @@ class VehicleTracker:
         for frame_idx, (path, im0s, _) in enumerate(self.dataset):
             im0s = np.array(im0s).squeeze()
             for i in range(self.dir_num):
-                windows.systerm_status_echo(f"请绘制第{i + 1}条道路的车道线")
+                windows.system_echo_signal.emit(f"请绘制第{i + 1}条道路的车道线")
                 self.data_dir[i] = draw_lanes_in_pic(im0s, windows)
             self.scale = 3.75 / self.data_dir[0]['lane_width']
             break  # 仅初始化第一帧即可
@@ -477,7 +479,7 @@ class VehicleTracker:
 
         # 保存路径根地址
         frame_index = 0
-        dir_data, dir_num_data, out_num, scale = None, None, None, None
+        dir_data, scale = None, None
         ref, frame = video.read()
         if not ref:
             raise ValueError("未能正确读取视频，请注意是否正确填写视频路径。")
@@ -498,7 +500,7 @@ class VehicleTracker:
                 # image_l = np.array(image_l)
                 # image_x = np.array(image_x)
                 image_lx = np.array(image_lx)
-                dir_data, out_num, size = fit_lanes_line(image_s, frame, image_lx)
+                dir_data = fit_lanes_line(image_s, frame, image_lx)
                 roi_zone, scale = get_roi(dir_data)
                 # size = [size[0] * self.scale, size[1] * self.scale]
 
@@ -508,7 +510,6 @@ class VehicleTracker:
             dir_data = fix_dir_data(dir_data)
             self.data_dir = dir_data
             self.dir_num = len(dir_data)
-            self.out_num_dist = out_num
             self.scale = scale
             self.run_init_dir = True
 
@@ -627,8 +628,7 @@ class VehicleTracker:
             frame_count += 1
             # 每五帧yield一次进度信息
             if frame_count % 10 == 0:
-                pass
-                # yield f"正在处理第{frame_count}帧"
+                yield f"已完成处理{frame_count}帧"
             fps = self.dataset.fps
 
             path = str(path[0])
@@ -919,7 +919,7 @@ class VehicleTracker:
             3: {1: ['left'], 2: ['straight'], 3: ['right']}
         }
 
-        if mode == 0:
+        if mode != 5:
             write_roads(self.data_dir, self.scale, self.xmlfile)
         else:
             write_crosses(self.data_dir, road_rules, self.out_num_dist, self.scale, self.xmlfile)

@@ -215,40 +215,40 @@ def stop_line_cluster_fit(image_s, image0):
     cross_size_y_max = 0
     for points,category in zip(clustered_points_new,fit_category):
         points = np.array(points)
-        if len(points) < 400:  # 至少需要3个点才能拟合二次多项式
+        if len(points) < 200:  # 至少需要3个点才能拟合二次多项式
             continue
         fit = np.polyfit(points[:, 1], points[:, 0], 1)
 
         if category == 0:
-            max_x = max(point[1] for point in points)
-            min_x = min(point[1] for point in points)
+            max_x = int(max(point[1] for point in points))
+            min_x = int(min(point[1] for point in points))
             y1 = int(fit_stop(max_x, fit))
             y2 = int(fit_stop(min_x, fit))
-            x_mean = (max_x + min_x) / 2
-            y_mean = (y1 + y2) / 2
+            x_mean = int((max_x + min_x) / 2)
+            y_mean = int((y1 + y2) / 2)
             cv2.line(image0, (max_x, y1), (min_x, y2), c[i], 5)
             # cv2.imwrite('fit_a_line.jpg', image)
             points = ((min_x, y2), (max_x, y1))
             # print('hengxian')
         else:
-            max_y = max(point[0] for point in points)
-            min_y = min(point[0] for point in points)
+            max_y = int(max(point[0] for point in points))
+            min_y = int(min(point[0] for point in points))
             x1 = int(fit_stop_y2x(max_y, fit))
             x2 = int(fit_stop_y2x(min_y, fit))
-            x_mean = (x1 + x2) / 2
-            y_mean = (min_y + max_y) / 2
+            x_mean = int((x1 + x2) / 2)
+            y_mean = int((min_y + max_y) / 2)
             cv2.line(image0, (x1, max_y), (x2, min_y), c[i], 5)
             # cv2.imwrite('fit_a_line.jpg', image)
             points = ((x2, min_y), (x1, max_y))
             # print('shuxian')
 
-        k_ver = - 1 / fit[0]
-        b_ver = y_mean - k_ver * x_mean
+        k_ver = float(- 1 / fit[0])
+        b_ver = float(y_mean - k_ver * x_mean)
         dir[i] = {'category': category,'stop': {'fit': fit, 'points': points}, 'zhongdian': (x_mean, y_mean),'ver': (k_ver, b_ver)}
-        cross_size_x_min = min(points[0][0],points[1][0], cross_size_x_min)
-        cross_size_x_max = max(points[0][0],points[1][0], cross_size_x_max)
-        cross_size_y_min = min(points[0][1],points[1][1], cross_size_y_min)
-        cross_size_y_max = max(points[0][1],points[1][1], cross_size_y_max)
+        cross_size_x_min = int(min(points[0][0],points[1][0], cross_size_x_min))
+        cross_size_x_max = int(max(points[0][0],points[1][0], cross_size_x_max))
+        cross_size_y_min = int(min(points[0][1],points[1][1], cross_size_y_min))
+        cross_size_y_max = int(max(points[0][1],points[1][1], cross_size_y_max))
         i = i+1
 
     cross_size_x = abs(cross_size_x_max - cross_size_x_min)
@@ -559,10 +559,10 @@ def get_out_lane_num(image,image0,dir):
     return out
 
 def lane_fit(mode, dir_index, dir_points, category, image,dir):
-    max_x = max(point[0] for point in dir_points)
-    min_x = min(point[0] for point in dir_points)
-    max_y = max(point[1] for point in dir_points)
-    min_y = min(point[1] for point in dir_points)
+    max_x = int(max(point[0] for point in dir_points))
+    min_x = int(min(point[0] for point in dir_points))
+    max_y = int(max(point[1] for point in dir_points))
+    min_y = int(min(point[1] for point in dir_points))
     if category == 0:
         scale = 5
         min_lane_length = (max_x - min_x) / 8
@@ -600,10 +600,10 @@ def lane_fit(mode, dir_index, dir_points, category, image,dir):
             def lane(x):
                 return fit_l[1] + fit_l[0] * x
 
-            max_x_l = max(point[0] for point in points_l)
-            min_x_l = min(point[0] for point in points_l)
-            max_y_l = max(point[1] for point in points_l)
-            min_y_l = min(point[1] for point in points_l)
+            max_x_l = int(max(point[0] for point in points_l))
+            min_x_l = int(min(point[0] for point in points_l))
+            max_y_l = int(max(point[1] for point in points_l))
+            min_y_l = int(min(point[1] for point in points_l))
             dis_line = dis(max_x_l, max_y_l, min_x_l, min_y_l)
 
             # if dis_line >= min_lane_length:
@@ -620,9 +620,9 @@ def lane_fit(mode, dir_index, dir_points, category, image,dir):
                         dir[dir_index]['lines'] = {'fits': [], 'end': [], 'start': [],'weight':[]}
 
                     if category == 0:
-                        x1 = min(np.array(stop_line)[0][0], np.array(stop_line)[1][0])
-                        x2 = max(np.array(stop_line)[0][0], np.array(stop_line)[1][0])
-                        if intersection_point[0] >= (x1 - 3) and intersection_point[0] <= (x2 + 3):
+                        x1 = int(min(np.array(stop_line)[0][0]), int(np.array(stop_line)[1][0]))
+                        x2 = int(max(np.array(stop_line)[0][0]), int(np.array(stop_line)[1][0]))
+                        if (x1 - 3) <= intersection_point[0] <= (x2 + 3):
                         # if intersection_point[0] >= (x1 - 200) and intersection_point[0] <= (x2 + 200):
                             min_y_l_draw = min(intersection_point[1], min_y_l)
                             max_y_l_draw = max(intersection_point[1], max_y_l)
@@ -636,7 +636,9 @@ def lane_fit(mode, dir_index, dir_points, category, image,dir):
                                 if fit[0] * (y - fit_l[1]) / fit_l[0] - y + fit[1] > 0:
                                     if 'direction' not in dir[dir_index]:
                                         dir[dir_index]['direction'] = 2 # “山”
-                                        dir[dir_index]['stop']['points'] = ((np.array(stop_line)[1][0],np.array(stop_line)[1][1]),(np.array(stop_line)[0][0],np.array(stop_line)[0][1]))
+                                        dir[dir_index]['stop']['points'] = \
+                                            ((int(np.array(stop_line)[1][0]), int(np.array(stop_line)[1][1])),
+                                             (int(np.array(stop_line)[0][0]), int(np.array(stop_line)[0][1])))
                                 else:
                                     if 'direction' not in dir[dir_index]:
                                         dir[dir_index]['direction'] = 4 # 倒“山”
@@ -669,9 +671,9 @@ def lane_fit(mode, dir_index, dir_points, category, image,dir):
 
 
                     elif category == 1:
-                        y1 = min(stop_line[0][1], stop_line[1][1])
-                        y2 = max(stop_line[0][1], stop_line[1][1])
-                        if intersection_point[1] >= y1 - 10 and intersection_point[1] <= y2 + 15:
+                        y1 = int(min(stop_line[0][1], stop_line[1][1]))
+                        y2 = int(max(stop_line[0][1], stop_line[1][1]))
+                        if y1 - 10 <= intersection_point[1] <= y2 + 15:
                             min_x_l_draw = min(intersection_point[0], min_x_l)
                             max_x_l_draw = max(intersection_point[0], max_x_l)
                             dir[dir_index]['lines']['fits'].append(fit_l)
@@ -684,8 +686,8 @@ def lane_fit(mode, dir_index, dir_points, category, image,dir):
                                     if 'direction' not in dir[dir_index]:
                                         dir[dir_index]['direction'] = 1 # “E”
                                         dir[dir_index]['stop']['points'] = (
-                                        (np.array(stop_line)[1][0], np.array(stop_line)[1][1]),
-                                        (np.array(stop_line)[0][0], np.array(stop_line)[0][1]))
+                                        (int(np.array(stop_line)[1][0]), int(np.array(stop_line)[1][1])),
+                                        (int(np.array(stop_line)[0][0]), int(np.array(stop_line)[0][1])))
                                 else:
                                     if 'direction' not in dir[dir_index]:
                                         dir[dir_index]['direction'] = 3  # 反“E”
@@ -965,7 +967,7 @@ def kb_select(direction, dd, mode):
         #         break
         #     ddis = ddis - 2
         # 使用DBSCAN聚类将像素点聚类
-        ddis = 20
+        ddis = 10
         dbscan_kb = DBSCAN(eps=ddis, min_samples=1)
         labels = dbscan_kb.fit_predict(kbs)
 
@@ -1150,9 +1152,9 @@ def fit_lanes(image_s, image, image_l):
     dir = dir_cluster_fit(1, image_l, image0, dir)
     # dir = dir_cluster_fit(2,image_x,image0,dir)
     # out_num = get_out_lane_num(image_x,image0,dir)
-    out_num = input_out_lane_num()
+    # out_num = input_out_lane_num()
 
-    return dir, out_num, size
+    return dir
 
 
 if __name__ == '__main__':

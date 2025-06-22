@@ -29,7 +29,7 @@ class Unet(object):
         #   验证集损失较低不代表miou较高，仅代表该权值在验证集上泛化性能较好。
         #-------------------------------------------------------------------#
         # "model_path"    : 'model_data/weights_new.pth',
-        "model_path"    : 'unet/model_data/weights_new.pth',
+        "model_path"    : 'weights/weights_new.pth',
         #--------------------------------#
         #   所需要区分的类的个数+1
         #--------------------------------#

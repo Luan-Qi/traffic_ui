@@ -1095,7 +1095,7 @@ def find_max_min_index(lst):
 
 
 
-def kbs_select(dir, image,mode):
+def kbs_select(dir, image, mode):
     for dir_id in range(len(dir)):
         direction = dir[dir_id]['direction']
         # if direction == 1 or direction == 3:

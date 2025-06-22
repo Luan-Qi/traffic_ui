@@ -140,6 +140,7 @@ def write_roads(dir,scale,outputpath):
     child1 = ET.SubElement(root, 'routes')
     child2 = ET.SubElement(root, 'lanes')
     for dir_id in range(len(dir)):
+        line_keys_count = sum(1 for key in dir[dir_id].keys() if key.startswith('Line'))
         direction = dir[dir_id]['direction']
         direction_write = str(5 - direction)
         points_start = dir[dir_id]['stop']['points']
@@ -148,7 +149,7 @@ def write_roads(dir,scale,outputpath):
 
         points_ends = []
         RealLineLens = []
-        for line_id in range(len(dir[dir_id])-9):
+        for line_id in range(line_keys_count):
             lines_start = dir[dir_id]['Line' + str(line_id)]['L1']['points'][0]
             lines_end = dir[dir_id]['Line' + str(line_id)]['L1']['points'][1]
             RealLineLen = round(math.sqrt((lines_start[0] - lines_end[0])**2 + (lines_start[1] - lines_end[1])**2) * scale,1)
@@ -162,7 +163,7 @@ def write_roads(dir,scale,outputpath):
         points_write = ', '.join(points)
         nodes = write_routes(child1,dir_id,len(dir[dir_id])-7,length,points_write,mode='no')  # 不需要两端路口
 
-        for lane_id in range(1,len(dir[dir_id])-9):
+        for lane_id in range(1,line_keys_count):
             write_lanes(child2,dir_id,lane_id,nodes,direction_write,RealLineLens[lane_id-1],RealLineLens[lane_id])
 
     child3 = ET.SubElement(root, 'dir')

@@ -172,6 +172,8 @@ def extract_border_color(stylesheet):
 class MainWindow(QWidget):
     update_label_signal = Signal()
     update_label_img_signal = Signal(np.ndarray)
+    system_echo_signal = Signal(str)
+    timer_wait_signal = Signal(bool)
     def __init__(self):
         super().__init__()
         # 设置界面
@@ -219,6 +221,9 @@ class MainWindow(QWidget):
         self.timer_scroll_txt.setInterval(200)  # 设置定时器间隔为500毫秒
         self.timer_scroll_txt.setSingleShot(True)  # 设置为单次触发
         self.timer_scroll_txt.timeout.connect(self.scroll_to_bottom)
+        self.timer_wait_sec = QTimer(self)
+        self.timer_wait_sec.timeout.connect(self.timer_wait_echo)
+        self.timer_wait_times = 0
 
         self.thread_get_road_lines = None
         self.thread_get_traffic_out = None
@@ -235,10 +240,25 @@ class MainWindow(QWidget):
         self.setupUI()
         self.update_label_signal.connect(self.update_label_slot)
         self.update_label_img_signal.connect(self.show_processed_frame_later)
+        self.timer_wait_signal.connect(self.timer_wait_sec_func)
+        self.system_echo_signal.connect(self.systerm_status_echo)
+
         self.multi_thread_lock = False
         self.is_drawing_lane = False
 
         self.developer_lock = True
+
+    def timer_wait_sec_func(self, statue):
+        if statue and self.timer_wait_sec.isActive() == False:
+            self.timer_wait_times = 1
+            self.timer_wait_sec.start(5000)
+        else:
+            self.timer_wait_sec.stop()
+
+    def timer_wait_echo(self):
+        echo_str = f"视频已经处理{self.timer_wait_times * 5}秒，请稍等..."
+        self.systerm_status_echo(echo_str)
+        self.timer_wait_times += 1
 
 
     def timer_func_update_frame(self):
@@ -455,7 +475,7 @@ class MainWindow(QWidget):
         self.video_played = False
         self.video_stopped = True
         self.timer_play_frame = QTimer(self)
-        self.systerm_status_echo("视频已关闭！")
+        self.text_edit.clear()
         self.btn_xml_process.setText("导入道路结构")
 
         self.btnLayout_H0.removeItem(self.btnLayout_H0.itemAt(2))
@@ -467,6 +487,8 @@ class MainWindow(QWidget):
         self.btn_video_play.setParent(None)
         self.btn_video_stop.setParent(None)
         self.btnLayout_video.addWidget(self.btn_video_open)
+
+        self.systerm_status_echo("视频已关闭！")
 
     def update_video_frame(self):
         if self.video_capture is not None:
@@ -494,21 +516,18 @@ class MainWindow(QWidget):
             self.systerm_status_echo("视频处理中，请等待处理完成！")
             return
 
-        # if self.developer_lock:
-        #     self.systerm_status_echo("功能暂不支持，请联系开发者！")
-        #     return
-
         if self.data_road_dir_ready:
             if self.data_xml_ready:
                 self.xml_path = QFileDialog.getExistingDirectory(self, "选择保存路网的文件夹", "")
                 if not self.xml_path:
                     self.systerm_status_echo('未选择路径！')
                     return
-                self.routes.save_xml(self.xml_path, 1)
+                method_index = self.processing_method_combobox.currentIndex()
+                self.routes.save_xml(self.xml_path, method_index)
                 print('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
                 self.systerm_status_echo('将路网信息保存到xml中，地址为' + str(self.routes.xmlfile))
             else:
-                self.systerm_status_echo('保存路网结构失败，XML文件未生成！')
+                self.systerm_status_echo('路网文件从外部导入，请勿重复导出！')
         else:
             self.xml_path, _ = QFileDialog.getOpenFileName(self, "选择XML文件", "", "路网文件 (*.xml)")
             if self.xml_path:
@@ -568,15 +587,15 @@ class MainWindow(QWidget):
 
     def get_road_lines(self):
         processing_method_index = self.processing_method_combobox.currentIndex()
-        self.systerm_status_echo(f"正在获取车道线结构")
+        self.system_echo_signal.emit(f"正在获取车道线结构")
 
         processed_frame = self.process_video(self.show_current_frame, processing_method_index)
         if processed_frame is not None:
-            self.systerm_status_echo("车道线结构获取完成！")
+            self.system_echo_signal.emit("车道线结构获取完成！")
         else:
             self.thread_running_flag = False
             self.data_road_dir_ready = False
-            self.systerm_status_echo("车道线结构获取失败！请检查问题重新开始！")
+            self.system_echo_signal.emit("车道线结构获取失败！请检查问题重新开始！")
             self.btn_xml_process.setText("导入道路结构")
             return
         self.show_processed_frame(processed_frame, self.routes.data_dir)
@@ -594,19 +613,22 @@ class MainWindow(QWidget):
             car_num_save = self.save_case3.isChecked()
             self.routes.initialication(vid_save, car_track_save, car_num_save)
             if method_index <= 3:         # 方式1 手划线
-                self.systerm_status_echo("请手动划车道线")
+                self.system_echo_signal.emit("请手动划车道线")
                 self.routes.Hand_Draw(method_index + 1, self)
             elif method_index == 4:
-                # raise NotImplementedError("暂不支持此方式！")
+                self.timer_wait_signal.emit(True)
                 self.routes.Segmentation()
+                self.timer_wait_signal.emit(False)
             elif method_index == 5:
-                # raise NotImplementedError("暂不支持此方式！")
+                self.timer_wait_signal.emit(True)
                 self.routes.Segmentation_Cross()
+                self.timer_wait_signal.emit(False)
             return frame
         except Exception as e:
             tb = traceback.format_exc()  # 获取完整的回溯信息
             print(f"在处理时发生异常: {tb}")
-            self.systerm_status_echo(f"在处理时发生异常: {e}")
+            self.system_echo_signal.emit(f"在处理时发生异常: {e}")
+            self.timer_wait_sec_func(False)
             self.is_drawing_lane = False
             time.sleep(0.1)
             return None
@@ -658,7 +680,7 @@ class MainWindow(QWidget):
         self.thread_running_flag = False
 
     def get_traffic_out_csv(self):
-        self.systerm_status_echo("正在获取交通流参数")
+        self.system_echo_signal.emit("正在获取交通流参数")
 
         try:
             bounding_box_save = []
@@ -678,13 +700,13 @@ class MainWindow(QWidget):
                         pass
                         #bounding_box_save = terminal_text
                 if isinstance(terminal_text, str):
-                    self.systerm_status_echo(terminal_text)
+                    self.system_echo_signal.emit(terminal_text)
             self.thread_running_flag = False
             print("get_traffic_out_csv\n")
         except Exception as e:
             tb = traceback.format_exc()  # 获取完整的回溯信息
             print(f"在处理时发生异常: {tb}")
-            self.systerm_status_echo(f"在处理时发生异常: {e}")
+            self.system_echo_signal.emit(f"在处理时发生异常: {e}")
             time.sleep(0.1)
             self.thread_running_flag = False
 
